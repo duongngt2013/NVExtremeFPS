@@ -2,8 +2,7 @@ package vn.nvextreme.fps;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.ParticlesMode;
+import net.minecraft.particle.ParticlesMode;
 
 public class NVExtremeFPSClient implements ClientModInitializer {
 
