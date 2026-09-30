@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "nvextreme-fps",
+  "version": "${version}",
+  "name": "NV Extreme FPS",
+  "description": "Performance optimization mod for Minecraft Fabric 1.21.11",
+  "authors": [
+    "NVNMC"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "vn.nvextreme.fps.NVExtremeFPSClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "1.21.11",
+    "fabric-api": "*"
+  }
+}
