@@ -2,6 +2,7 @@ package vn.nvextreme.fps;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.particle.ParticlesMode;
 
 public class NVExtremeFPSClient implements ClientModInitializer {
@@ -16,7 +17,7 @@ public class NVExtremeFPSClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             tickCounter++;
 
-            // Chỉ kiểm tra mỗi 2 giây
+            // Kiểm tra mỗi 2 giây
             if (tickCounter < 40) {
                 return;
             }
@@ -36,7 +37,7 @@ public class NVExtremeFPSClient implements ClientModInitializer {
         int fps = client.getCurrentFps();
         int renderDistance = client.options.getViewDistance().getValue();
 
-        // FPS thấp: giảm render distance nhưng không bao giờ dưới 6
+        // FPS thấp: giảm render distance nhưng không dưới 6 chunks
         if (fps > 0 && fps < 25) {
             if (renderDistance > MIN_RENDER_DISTANCE) {
                 client.options.getViewDistance()
@@ -47,9 +48,9 @@ public class NVExtremeFPSClient implements ClientModInitializer {
             client.options.getParticles().setValue(ParticlesMode.MINIMAL);
         }
 
-        // FPS ổn: có thể tăng render distance trở lại
+        // FPS ổn: tăng render distance trở lại
         else if (fps >= 50 && renderDistance < MAX_RENDER_DISTANCE) {
             client.options.getViewDistance().setValue(renderDistance + 1);
         }
     }
-    }
+}
