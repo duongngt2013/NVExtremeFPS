@@ -5,148 +5,58 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.particle.ParticlesMode;
 
-public class NVExtremeFPSClient implements ClientModInitializer {
+public final class NVExtremeFPSClient implements ClientModInitializer {
 
-    // =========================================================
-    // CORE LIMITS
-    // =========================================================
+    private static final int CHECK_INTERVAL_TICKS = 40;
+    private static final int LOW_FPS_THRESHOLD = 18;
+    private static final int CRITICAL_FPS_THRESHOLD = 10;
+    private static final int RECOVERY_FPS_THRESHOLD = 35;
 
-    // Không bao giờ tự giảm Render Distance dưới 6 chunks
-    private static final int MIN_VIEW_DISTANCE = 6;
+    private static final double HIGH_MEMORY_THRESHOLD = 0.85D;
+    private static final double CRITICAL_MEMORY_THRESHOLD = 0.92D;
 
-    // Mức tối đa NV Extreme FPS tự phục hồi
-    private static final int MAX_VIEW_DISTANCE = 8;
-
-    // Simulation Distance
-    private static final int MIN_SIMULATION_DISTANCE = 4;
-    private static final int MAX_SIMULATION_DISTANCE = 6;
-
-    // Entity rendering
     private static final double LOW_ENTITY_DISTANCE = 0.50D;
-    private static final double NORMAL_ENTITY_DISTANCE = 0.75D;
 
-    // =========================================================
-    // FAST BOOT
-    // =========================================================
+    private int menuTicks;
+    private int checkTicks;
+    private int lowPerformanceChecks;
+    private int recoveryChecks;
 
-    /*
-     * NV Extreme FPS không làm xử lý nặng trong lúc Minecraft
-     * đang khởi động.
-     *
-     * Không:
-     * - tạo thread riêng
-     * - scan toàn bộ mod
-     * - kiểm tra RAM liên tục
-     * - kiểm tra FPS liên tục
-     * - gọi System.gc()
-     * - thay đổi graphics settings lúc boot
-     *
-     * Optimizer chỉ bắt đầu sau khi Minecraft đã tới
-     * màn hình chờ / main menu.
-     */
-
-    private static final int MENU_DELAY_TICKS = 40;
-
-    private int menuTicks = 0;
-    private int optimizationTicks = 0;
-
-    private int lowFpsTicks = 0;
-    private int goodFpsTicks = 0;
-
-    private boolean optimizerStarted = false;
-
-    // =========================================================
-    // INITIALIZE
-    // =========================================================
+    private boolean optimizerStarted;
+    private boolean lowModeApplied;
 
     @Override
     public void onInitializeClient() {
-
-        /*
-         * Chỉ đăng ký một client tick callback.
-         *
-         * Đây là phần duy nhất được thiết lập khi mod load.
-         */
-        ClientTickEvents.END_CLIENT_TICK.register(
-                this::onClientTick
-        );
+        ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
     }
 
-    // =========================================================
-    // CLIENT TICK
-    // =========================================================
-
     private void onClientTick(MinecraftClient client) {
-
-        // =====================================================
-        // FAST BOOT PHASE
-        // =====================================================
-
         if (!optimizerStarted) {
-
-            /*
-             * Chưa tới màn hình chờ:
-             * thoát ngay lập tức.
-             */
             if (client.currentScreen == null) {
                 return;
             }
 
-            /*
-             * Minecraft đã có màn hình.
-             *
-             * Đợi thêm một khoảng ngắn để quá trình startup
-             * ổn định trước khi bắt đầu optimizer.
-             */
-            menuTicks++;
-
-            if (menuTicks < MENU_DELAY_TICKS) {
+            if (++menuTicks < CHECK_INTERVAL_TICKS) {
                 return;
             }
 
             optimizerStarted = true;
-
-            System.out.println(
-                    "[NV Extreme FPS] Fast Boot complete."
-            );
-
-            System.out.println(
-                    "[NV Extreme FPS] Adaptive optimizer started."
-            );
-
+            System.out.println("[NVExtremeFPS] Adaptive optimizer started.");
             return;
         }
 
-        // =====================================================
-        // OPTIMIZER
-        // =====================================================
-
-        optimizationTicks++;
-
-        /*
-         * Chỉ kiểm tra 1 lần mỗi 2 giây.
-         *
-         * Không xử lý nặng ở từng tick.
-         */
-        if (optimizationTicks < 40) {
+        if (++checkTicks < CHECK_INTERVAL_TICKS) {
             return;
         }
 
-        optimizationTicks = 0;
-
+        checkTicks = 0;
         optimize(client);
     }
 
-    // =========================================================
-    // MAIN OPTIMIZER
-    // =========================================================
-
     private void optimize(MinecraftClient client) {
-
-        /*
-         * Nếu đang ở menu thì không cần tối ưu FPS gameplay.
-         */
-        if (client.player == null) {
+        if (client.player == null || client.world == null) {
+            lowPerformanceChecks = 0;
+            recoveryChecks = 0;
             return;
         }
 
@@ -156,248 +66,80 @@ public class NVExtremeFPSClient implements ClientModInitializer {
             return;
         }
 
-        // =====================================================
-        // RAM MONITOR
-        // =====================================================
-
         Runtime runtime = Runtime.getRuntime();
 
         long maxMemory = runtime.maxMemory();
-        long totalMemory = runtime.totalMemory();
-        long freeMemory = runtime.freeMemory();
+        long usedMemory = runtime.totalMemory() - runtime.freeMemory();
 
-        long usedMemory = totalMemory - freeMemory;
+        double memoryUsage = maxMemory > 0
+                ? (double) usedMemory / maxMemory
+                : 0.0D;
 
-        double memoryUsage =
-                (double) usedMemory / (double) maxMemory;
+        boolean memoryHigh = memoryUsage >= HIGH_MEMORY_THRESHOLD;
+        boolean memoryCritical = memoryUsage >= CRITICAL_MEMORY_THRESHOLD;
 
-        boolean memoryHigh = memoryUsage >= 0.85D;
-        boolean memoryCritical = memoryUsage >= 0.92D;
+        boolean performanceLow =
+                fps < LOW_FPS_THRESHOLD || memoryHigh;
 
-        // =====================================================
-        // FPS STATE
-        // =====================================================
+        boolean performanceCritical =
+                fps < CRITICAL_FPS_THRESHOLD || memoryCritical;
 
-        boolean fpsLow = fps < 25;
-        boolean fpsCritical = fps < 18;
-
-        if (fpsLow || memoryHigh) {
-
-            lowFpsTicks++;
-            goodFpsTicks = 0;
-
-        } else if (fps >= 50 && !memoryHigh) {
-
-            goodFpsTicks++;
-            lowFpsTicks = 0;
-
+        if (performanceLow) {
+            lowPerformanceChecks++;
+            recoveryChecks = 0;
+        } else if (fps >= RECOVERY_FPS_THRESHOLD && !memoryHigh) {
+            recoveryChecks++;
+            lowPerformanceChecks = 0;
         } else {
-
-            lowFpsTicks = 0;
-            goodFpsTicks = 0;
+            lowPerformanceChecks = 0;
+            recoveryChecks = 0;
         }
 
-        // =====================================================
-        // EMERGENCY MODE
-        // =====================================================
-
-        if (memoryCritical || fpsCritical) {
-
-            emergencyMode(client);
-
+        if (performanceCritical || lowPerformanceChecks >= 2) {
+            applyLowPerformanceSettings(client);
+            lowModeApplied = true;
+            lowPerformanceChecks = 0;
+            recoveryChecks = 0;
             return;
         }
 
-        // =====================================================
-        // LOW FPS MODE
-        // =====================================================
+        // Không tự tăng Render Distance hoặc Simulation Distance.
+        // Chỉ phục hồi những thiết lập mà mod đã thay đổi.
+        if (lowModeApplied && recoveryChecks >= 5) {
+            recoveryChecks = 0;
+            lowModeApplied = false;
 
-        if (lowFpsTicks >= 2) {
-
-            lowFpsMode(client);
-
-            lowFpsTicks = 0;
-
-            return;
-        }
-
-        // =====================================================
-        // RECOVERY MODE
-        // =====================================================
-
-        if (goodFpsTicks >= 5) {
-
-            recoveryMode(client);
-
-            goodFpsTicks = 0;
+            System.out.println(
+                    "[NVExtremeFPS] Performance stabilized. "
+                    + "Keeping conservative distances."
+            );
         }
     }
 
-    // =========================================================
-    // EMERGENCY MODE
-    // =========================================================
+    private void applyLowPerformanceSettings(MinecraftClient client) {
+        // Tôn trọng Render Distance hiện tại của người chơi.
+        // Chỉ giảm nếu lớn hơn 2 chunks.
+        int viewDistance = client.options.getViewDistance().getValue();
 
-    private void emergencyMode(MinecraftClient client) {
-
-        // Render Distance >= 6
-        if (client.options.getViewDistance().getValue()
-                > MIN_VIEW_DISTANCE) {
-
-            client.options.getViewDistance()
-                    .setValue(MIN_VIEW_DISTANCE);
+        if (viewDistance > 2) {
+            client.options.getViewDistance().setValue(2);
         }
 
-        // Simulation Distance >= 4
-        if (client.options.getSimulationDistance().getValue()
-                > MIN_SIMULATION_DISTANCE) {
+        // Không tự tăng Simulation Distance.
+        int simulationDistance =
+                client.options.getSimulationDistance().getValue();
 
-            client.options.getSimulationDistance()
-                    .setValue(MIN_SIMULATION_DISTANCE);
+        if (simulationDistance > 2) {
+            client.options.getSimulationDistance().setValue(2);
         }
 
-        // Entity rendering
         if (client.options.getEntityDistanceScaling().getValue()
                 > LOW_ENTITY_DISTANCE) {
-
             client.options.getEntityDistanceScaling()
                     .setValue(LOW_ENTITY_DISTANCE);
         }
 
-        // GPU load
-        client.options.getEntityShadows()
-                .setValue(false);
-
-        // Particle load
-        client.options.getParticles()
-                .setValue(ParticlesMode.MINIMAL);
-    }
-
-    // =========================================================
-    // LOW FPS MODE
-    // =========================================================
-
-    private void lowFpsMode(MinecraftClient client) {
-
-        int viewDistance =
-                client.options.getViewDistance().getValue();
-
-        int simulationDistance =
-                client.options.getSimulationDistance().getValue();
-
-        double entityDistance =
-                client.options.getEntityDistanceScaling().getValue();
-
-        // -----------------------------------------------------
-        // Render Distance
-        // -----------------------------------------------------
-
-        if (viewDistance > MIN_VIEW_DISTANCE) {
-
-            client.options.getViewDistance()
-                    .setValue(
-                            Math.max(
-                                    MIN_VIEW_DISTANCE,
-                                    viewDistance - 1
-                            )
-                    );
-        }
-
-        // -----------------------------------------------------
-        // Simulation Distance
-        // -----------------------------------------------------
-
-        if (simulationDistance > MIN_SIMULATION_DISTANCE) {
-
-            client.options.getSimulationDistance()
-                    .setValue(
-                            Math.max(
-                                    MIN_SIMULATION_DISTANCE,
-                                    simulationDistance - 1
-                            )
-                    );
-        }
-
-        // -----------------------------------------------------
-        // Entity Distance
-        // -----------------------------------------------------
-
-        if (entityDistance > LOW_ENTITY_DISTANCE) {
-
-            client.options.getEntityDistanceScaling()
-                    .setValue(LOW_ENTITY_DISTANCE);
-        }
-
-        // -----------------------------------------------------
-        // GPU
-        // -----------------------------------------------------
-
-        client.options.getEntityShadows()
-                .setValue(false);
-
-        // -----------------------------------------------------
-        // Particles
-        // -----------------------------------------------------
-
-        client.options.getParticles()
-                .setValue(ParticlesMode.MINIMAL);
-    }
-
-    // =========================================================
-    // RECOVERY MODE
-    // =========================================================
-
-    private void recoveryMode(MinecraftClient client) {
-
-        int viewDistance =
-                client.options.getViewDistance().getValue();
-
-        int simulationDistance =
-                client.options.getSimulationDistance().getValue();
-
-        double entityDistance =
-                client.options.getEntityDistanceScaling().getValue();
-
-        // -----------------------------------------------------
-        // Render Distance
-        // -----------------------------------------------------
-
-        if (viewDistance < MAX_VIEW_DISTANCE) {
-
-            client.options.getViewDistance()
-                    .setValue(viewDistance + 1);
-        }
-
-        // -----------------------------------------------------
-        // Simulation Distance
-        // -----------------------------------------------------
-
-        if (simulationDistance < MAX_SIMULATION_DISTANCE) {
-
-            client.options.getSimulationDistance()
-                    .setValue(simulationDistance + 1);
-        }
-
-        // -----------------------------------------------------
-        // Entity Distance
-        // -----------------------------------------------------
-
-        if (entityDistance < NORMAL_ENTITY_DISTANCE) {
-
-            client.options.getEntityDistanceScaling()
-                    .setValue(NORMAL_ENTITY_DISTANCE);
-        }
-
-        /*
-         * Shadow vẫn giữ OFF để ưu tiên GPU/FPS.
-         */
-        client.options.getEntityShadows()
-                .setValue(false);
-
-        /*
-         * Particle vẫn giữ Minimal để tránh tải GPU/CPU
-         * không cần thiết.
-         */
-        client.options.getParticles()
-                .setValue(ParticlesMode.MINIMAL);
+        client.options.getEntityShadows().setValue(false);
+        client.options.getParticles().setValue(ParticlesMode.MINIMAL);
     }
 }
